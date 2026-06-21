@@ -1,17 +1,15 @@
 const http = require("http");
 const WebSocket = require("ws");
 
-// Basic HTTP server (required for Render health checks)
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Godot Global Chat Server Online");
+  res.end("Godot Chat Server Online");
 });
 
-// WebSocket server
 const wss = new WebSocket.Server({ server });
 
-// Store connected clients
-const clients = new Map(); 
+// Store client data properly
+const clients = new Map();
 // ws => { username }
 
 function broadcast(data) {
@@ -24,58 +22,68 @@ function broadcast(data) {
   }
 }
 
-// Handle connections
+function sanitizeName(name) {
+  if (!name) return "Guest";
+  return name.toString().slice(0, 20).trim();
+}
+
 wss.on("connection", (ws) => {
+  // default user
   clients.set(ws, { username: "Guest" });
 
   console.log("Player connected:", clients.size);
 
-  // Send welcome
   ws.send(JSON.stringify({
     type: "system",
     message: "Connected to global chat"
   }));
 
-  // Broadcast join
   broadcast({
     type: "system",
-    message: `A player joined (${clients.size} online)`
+    message: `Player joined (${clients.size} online)`
   });
 
-  // Receive messages
   ws.on("message", (raw) => {
     try {
       const data = JSON.parse(raw);
 
-      // Set username once
+      // -------------------------
+      // SET USERNAME (from AccountManager)
+      // -------------------------
       if (data.type === "set_name") {
-        const user = clients.get(ws);
-        user.username = (data.username || "Guest").slice(0, 20);
+        const user = clients.get(ws) || {};
+        user.username = sanitizeName(data.username);
         clients.set(ws, user);
+
+        console.log("Name set:", user.username);
         return;
       }
 
-      // Chat message
+      // -------------------------
+      // CHAT MESSAGE
+      // -------------------------
       if (data.type === "chat") {
         const user = clients.get(ws);
 
-        const message = (data.message || "").toString().slice(0, 200);
+        const message = (data.message || "")
+          .toString()
+          .slice(0, 200)
+          .trim();
 
-        if (!message.trim()) return;
+        if (!message) return;
 
         broadcast({
           type: "chat",
-          username: user.username,
+          username: user?.username || "Guest",
           message: message
         });
       }
 
     } catch (err) {
-      console.log("Bad message ignored");
+      console.log("Invalid message ignored");
     }
   });
 
-  // Disconnect
   ws.on("close", () => {
     clients.delete(ws);
 
@@ -83,14 +91,13 @@ wss.on("connection", (ws) => {
 
     broadcast({
       type: "system",
-      message: `A player left (${clients.size} online)`
+      message: `Player left (${clients.size} online)`
     });
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 10000;
-
 server.listen(PORT, () => {
   console.log("Server running on port", PORT);
 });
