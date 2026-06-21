@@ -8,10 +8,20 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
-// Store client data properly
-const clients = new Map();
-// ws => { username }
+// ----------------------
+// CLIENTS
+// ----------------------
+const clients = new Map(); // ws => { username }
 
+// ----------------------
+// CHAT HISTORY (ROLLING BUFFER)
+// ----------------------
+let chatHistory = [];
+const MAX_MESSAGES = 200;
+
+// ----------------------
+// BROADCAST FUNCTION
+// ----------------------
 function broadcast(data) {
   const msg = JSON.stringify(data);
 
@@ -22,34 +32,44 @@ function broadcast(data) {
   }
 }
 
+// ----------------------
+// CLEAN USERNAME
+// ----------------------
 function sanitizeName(name) {
   if (!name) return "Guest";
   return name.toString().slice(0, 20).trim();
 }
 
+// ----------------------
+// CONNECTION
+// ----------------------
 wss.on("connection", (ws) => {
-  // default user
   clients.set(ws, { username: "Guest" });
 
   console.log("Player connected:", clients.size);
 
+  // Send current chat history
   ws.send(JSON.stringify({
-    type: "system",
-    message: "Connected to global chat"
+    type: "history",
+    messages: chatHistory
   }));
 
+  // System message
   broadcast({
     type: "system",
     message: `Player joined (${clients.size} online)`
   });
 
+  // ----------------------
+  // MESSAGE HANDLER
+  // ----------------------
   ws.on("message", (raw) => {
     try {
       const data = JSON.parse(raw);
 
-      // -------------------------
-      // SET USERNAME (from AccountManager)
-      // -------------------------
+      // ----------------------
+      // SET NAME
+      // ----------------------
       if (data.type === "set_name") {
         const user = clients.get(ws) || {};
         user.username = sanitizeName(data.username);
@@ -59,9 +79,9 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      // -------------------------
+      // ----------------------
       // CHAT MESSAGE
-      // -------------------------
+      // ----------------------
       if (data.type === "chat") {
         const user = clients.get(ws);
 
@@ -72,11 +92,23 @@ wss.on("connection", (ws) => {
 
         if (!message) return;
 
-        broadcast({
+        const messageData = {
           type: "chat",
           username: user?.username || "Guest",
-          message: message
-        });
+          message: message,
+          time: Date.now()
+        };
+
+        // Add to history
+        chatHistory.push(messageData);
+
+        // 🔥 KEEP LAST 200 MESSAGES ONLY (ROLLING BUFFER)
+        if (chatHistory.length > MAX_MESSAGES) {
+          chatHistory.shift();
+        }
+
+        // Broadcast to all players
+        broadcast(messageData);
       }
 
     } catch (err) {
@@ -84,6 +116,9 @@ wss.on("connection", (ws) => {
     }
   });
 
+  // ----------------------
+  // DISCONNECT
+  // ----------------------
   ws.on("close", () => {
     clients.delete(ws);
 
@@ -96,7 +131,9 @@ wss.on("connection", (ws) => {
   });
 });
 
-// Start server
+// ----------------------
+// START SERVER
+// ----------------------
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log("Server running on port", PORT);
