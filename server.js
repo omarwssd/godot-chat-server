@@ -11,9 +11,10 @@ const wss = new WebSocket.Server({ server });
 // ----------------------
 // DATA
 // ----------------------
-const clients = new Map(); // ws => { username }
-let chatHistory = [];
+const clients = new Map(); 
+// ws => { username }
 
+let chatHistory = [];
 const MAX_MESSAGES = 200;
 
 // ----------------------
@@ -29,6 +30,16 @@ function broadcast(data) {
   }
 }
 
+// find player by name
+function findClientByName(name) {
+  for (const [ws, data] of clients) {
+    if (data.username === name) {
+      return ws;
+    }
+  }
+  return null;
+}
+
 function sanitizeName(name) {
   if (!name) return "Guest";
   return name.toString().slice(0, 20).trim();
@@ -42,20 +53,19 @@ wss.on("connection", (ws) => {
 
   console.log("Player connected:", clients.size);
 
-  // 🔥 STEP 1: SEND HISTORY IMMEDIATELY
+  // send history
   ws.send(JSON.stringify({
     type: "history",
     messages: chatHistory
   }));
 
-  // 🔥 STEP 2: SYSTEM MESSAGE
   broadcast({
     type: "system",
     message: `Player joined (${clients.size} online)`
   });
 
   // ----------------------
-  // MESSAGE HANDLING
+  // MESSAGE HANDLER
   // ----------------------
   ws.on("message", (raw) => {
     try {
@@ -74,7 +84,7 @@ wss.on("connection", (ws) => {
       }
 
       // ----------------------
-      // CHAT MESSAGE
+      // GLOBAL CHAT
       // ----------------------
       if (data.type === "chat") {
         const user = clients.get(ws);
@@ -82,21 +92,55 @@ wss.on("connection", (ws) => {
         const messageData = {
           type: "chat",
           username: user?.username || "Guest",
-          message: (data.message || "").toString().slice(0, 200).trim()
+          message: data.message
         };
 
-        if (!messageData.message) return;
-
-        // add to history
         chatHistory.push(messageData);
 
-        // keep only last 200 messages (rolling buffer)
         if (chatHistory.length > MAX_MESSAGES) {
           chatHistory.shift();
         }
 
-        // broadcast to all clients
         broadcast(messageData);
+        return;
+      }
+
+      // ----------------------
+      // PRIVATE MESSAGE (DM)
+      // ----------------------
+      if (data.type === "dm") {
+        const fromUser = clients.get(ws)?.username || "Guest";
+        const targetName = data.to;
+        const message = data.message;
+
+        const targetWs = findClientByName(targetName);
+
+        if (!targetWs) {
+          ws.send(JSON.stringify({
+            type: "system",
+            message: "User not found: " + targetName
+          }));
+          return;
+        }
+
+        const dmData = {
+          type: "dm",
+          from: fromUser,
+          message: message
+        };
+
+        // send ONLY to target
+        targetWs.send(JSON.stringify(dmData));
+
+        // optional: echo back to sender
+        ws.send(JSON.stringify({
+          type: "dm",
+          from: "You → " + targetName,
+          message: message
+        }));
+
+        console.log(`DM: ${fromUser} → ${targetName}: ${message}`);
+        return;
       }
 
     } catch (err) {
@@ -120,7 +164,7 @@ wss.on("connection", (ws) => {
 });
 
 // ----------------------
-// START SERVER
+// START
 // ----------------------
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
