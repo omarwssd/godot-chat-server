@@ -9,18 +9,15 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocket.Server({ server });
 
 // ----------------------
-// CLIENTS
+// DATA
 // ----------------------
 const clients = new Map(); // ws => { username }
-
-// ----------------------
-// CHAT HISTORY (ROLLING BUFFER)
-// ----------------------
 let chatHistory = [];
+
 const MAX_MESSAGES = 200;
 
 // ----------------------
-// BROADCAST FUNCTION
+// HELPERS
 // ----------------------
 function broadcast(data) {
   const msg = JSON.stringify(data);
@@ -32,9 +29,6 @@ function broadcast(data) {
   }
 }
 
-// ----------------------
-// CLEAN USERNAME
-// ----------------------
 function sanitizeName(name) {
   if (!name) return "Guest";
   return name.toString().slice(0, 20).trim();
@@ -48,20 +42,20 @@ wss.on("connection", (ws) => {
 
   console.log("Player connected:", clients.size);
 
-  // Send current chat history
+  // 🔥 STEP 1: SEND HISTORY IMMEDIATELY
   ws.send(JSON.stringify({
     type: "history",
     messages: chatHistory
   }));
 
-  // System message
+  // 🔥 STEP 2: SYSTEM MESSAGE
   broadcast({
     type: "system",
     message: `Player joined (${clients.size} online)`
   });
 
   // ----------------------
-  // MESSAGE HANDLER
+  // MESSAGE HANDLING
   // ----------------------
   ws.on("message", (raw) => {
     try {
@@ -71,7 +65,7 @@ wss.on("connection", (ws) => {
       // SET NAME
       // ----------------------
       if (data.type === "set_name") {
-        const user = clients.get(ws) || {};
+        const user = clients.get(ws);
         user.username = sanitizeName(data.username);
         clients.set(ws, user);
 
@@ -85,29 +79,23 @@ wss.on("connection", (ws) => {
       if (data.type === "chat") {
         const user = clients.get(ws);
 
-        const message = (data.message || "")
-          .toString()
-          .slice(0, 200)
-          .trim();
-
-        if (!message) return;
-
         const messageData = {
           type: "chat",
           username: user?.username || "Guest",
-          message: message,
-          time: Date.now()
+          message: (data.message || "").toString().slice(0, 200).trim()
         };
 
-        // Add to history
+        if (!messageData.message) return;
+
+        // add to history
         chatHistory.push(messageData);
 
-        // 🔥 KEEP LAST 200 MESSAGES ONLY (ROLLING BUFFER)
+        // keep only last 200 messages (rolling buffer)
         if (chatHistory.length > MAX_MESSAGES) {
           chatHistory.shift();
         }
 
-        // Broadcast to all players
+        // broadcast to all clients
         broadcast(messageData);
       }
 
